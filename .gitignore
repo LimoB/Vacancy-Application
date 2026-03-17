@@ -1,0 +1,16 @@
+# Ignore frontend node_modules
+frontend/node_modules/
+
+# Optional (recommended)
+frontend/build/
+frontend/dist/
+
+# Logs
+*.log
+
+# Environment files
+# .env
+
+# OS files
+.DS_Store
+Thumbs.db
