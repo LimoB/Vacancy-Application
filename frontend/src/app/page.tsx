@@ -8,7 +8,8 @@ import {
   FaSearch, 
   FaMapMarkerAlt, 
   FaUserCircle,
-  FaBriefcase 
+  FaBriefcase,
+  FaUserShield 
 } from "react-icons/fa";
 import { IoLogOutOutline } from "react-icons/io5";
 import { useAuth } from '@/src/context/AuthContext';
@@ -19,6 +20,16 @@ const Page = () => {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Helper to identify admin status
+  const isAdmin = user?.user_role?.toLowerCase() === 'admin' || user?.user_type?.toLowerCase() === 'admin';
+
+  // Dynamic profile link helper
+  const getProfileLink = () => {
+    if (isAdmin) return '/admin';
+    if (user?.user_type?.toLowerCase() === 'employer') return '/employer';
+    return '/seeker/profile';
+  };
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -65,7 +76,7 @@ const Page = () => {
                   onClick={() => setIsOpen(!isOpen)}
                   className='flex items-center gap-3 bg-white/5 p-1 pr-4 rounded-2xl border border-white/10 hover:bg-white/10 transition-all cursor-pointer group'
                 >
-                  <div className='relative w-10 h-10 rounded-xl overflow-hidden border-2 border-orange-500/50'>
+                  <div className={`relative w-10 h-10 rounded-xl overflow-hidden border-2 ${isAdmin ? 'border-red-500/50' : 'border-orange-500/50'}`}>
                     <Image 
                       src={user.profile_picture || '/usericon.png'} 
                       alt='profile' 
@@ -82,26 +93,32 @@ const Page = () => {
 
                 {/* --- DROPDOWN MENU --- */}
                 {isOpen && (
-                  <div className='absolute right-0 mt-4 w-56 bg-[#0c093d] border border-white/10 rounded-2xl shadow-2xl py-3 animate-in fade-in zoom-in-95 duration-200 backdrop-blur-2xl'>
-                    <div className='px-4 py-2 border-b border-white/5 mb-2'>
+                  <div className='absolute right-0 mt-4 w-60 bg-[#0c093d] border border-white/10 rounded-2xl shadow-2xl py-3 animate-in fade-in zoom-in-95 duration-200 backdrop-blur-2xl'>
+                    <div className='px-4 py-2 border-b border-white/5 mb-2 bg-white/5 mx-2 rounded-xl'>
                       <p className='text-xs font-black text-white truncate'>{user.username}</p>
-                      <p className='text-[9px] uppercase tracking-widest text-orange-500 font-bold mt-0.5'>{user.user_role || user.user_type}</p>
+                      
+                      {/* SPECIFIC LABEL LOGIC */}
+                      <p className={`text-[9px] uppercase tracking-widest font-black mt-1 ${isAdmin ? 'text-red-500' : 'text-orange-500'}`}>
+                        {isAdmin ? 'System Administrator' : `${user.user_type} Account`}
+                      </p>
                     </div>
 
                     <Link 
-                      href="/jobs" 
+                      href={isAdmin ? "/admin" : "/jobs"} 
                       onClick={() => setIsOpen(false)}
                       className='flex items-center gap-3 px-4 py-2.5 text-xs text-gray-300 hover:bg-white/5 hover:text-white transition-all'
                     >
-                      <FaBriefcase size={16} className='text-blue-400' /> Job Dashboard
+                      {isAdmin ? <FaUserShield size={16} className='text-red-500' /> : <FaBriefcase size={16} className='text-blue-400' />}
+                      {isAdmin ? 'Management Console' : 'Job Dashboard'}
                     </Link>
 
                     <Link 
-                      href="/seeker/profile" 
+                      href={getProfileLink()} 
                       onClick={() => setIsOpen(false)}
                       className='flex items-center gap-3 px-4 py-2.5 text-xs text-gray-300 hover:bg-white/5 hover:text-white transition-all'
                     >
-                      <FaUserCircle size={16} className='text-orange-500' /> My Profile
+                      <FaUserCircle size={16} className='text-orange-500' /> 
+                      {isAdmin ? 'Admin Profile' : 'My Settings'}
                     </Link>
 
                     <button 
@@ -143,13 +160,12 @@ const Page = () => {
               Discover roles you love at top-tier companies. Your next career milestone starts here.
             </p>
             
-            {/* Direct Browse Link for Logged In Users */}
             {user && (
-              <Link href="/jobs" className='flex items-center gap-3 group w-fit bg-white/5 border border-white/10 px-6 py-3 rounded-2xl hover:bg-white/10 transition-all'>
-                <div className='bg-orange-500 rounded-full p-2 group-hover:scale-110 transition-transform'>
-                  <FaBriefcase className='text-white text-xs' />
+              <Link href={isAdmin ? "/admin" : "/jobs"} className='flex items-center gap-3 group w-fit bg-white/5 border border-white/10 px-6 py-3 rounded-2xl hover:bg-white/10 transition-all'>
+                <div className={`${isAdmin ? 'bg-red-500' : 'bg-orange-500'} rounded-full p-2 group-hover:scale-110 transition-transform`}>
+                  {isAdmin ? <FaUserShield className='text-white text-xs' /> : <FaBriefcase className='text-white text-xs' />}
                 </div>
-                <span className='text-sm font-bold'>Return to Job Postings</span>
+                <span className='text-sm font-bold'>{isAdmin ? 'Enter Admin Core' : 'Return to Job Postings'}</span>
               </Link>
             )}
           </div>

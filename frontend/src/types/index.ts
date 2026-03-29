@@ -1,7 +1,12 @@
-// Matches the logic in your SQLAlchemy models
-export type UserRole = 'admin' | 'user';
-export type UserType = 'seeker' | 'employer';
-export type ApplicationStatus = 'Pending' | 'Accepted' | 'Rejected';
+// --- ENUMS & LITERALS ---
+export type UserRole = 'admin' | 'user' | 'employer' | 'seeker';
+export type UserType = 'seeker' | 'employer' | 'admin';
+
+export type ApplicationStatus = 
+  | 'Pending' | 'Accepted' | 'Rejected' 
+  | 'pending' | 'accepted' | 'rejected';
+
+// --- INTERFACES ---
 
 export interface User {
   id: number;
@@ -11,22 +16,24 @@ export interface User {
   user_type: UserType;
   about?: string;
   location?: string;
-  date_created: string; // From func.now()
-  last_active: string;  // From onupdate=func.now()
-  // serialize_rules allows seeing applications from the user side
+  date_created: string; 
+  last_active: string;  
   applications?: Application[]; 
-  profile_picture?: string; // Add this line!
+  profile_picture?: string; 
 }
 
 export interface Job {
-    employer_id: number;
   id: number;
+  /** The FK to the User who created the job (consistent with backend) */
+  employer_id: number; 
+  /** Optional backup for older records or specific joins */
+  user_id?: number; 
   company: string;
   job_title: string;
   job_description: string;
   salary: string;
   date_created: string;
-  // serialize_rules allows seeing who applied from the job side
+  /** Included to support the "Applicant Count" logic */
   applications?: Application[];
 }
 
@@ -36,7 +43,7 @@ export interface Application {
   user_id: number;
   job_id: number;
   application_date: string;
-  // Nested data enabled by your serialize_rules
+  /** Nested data enabled by your serialize_rules in Flask */
   job?: Job;  
   user?: User; 
 }
