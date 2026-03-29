@@ -15,8 +15,8 @@ db = SQLAlchemy(metadata=metadata)
 
 class User(db.Model, SerializerMixin):
     __tablename__ = 'users'
-    # We allow 'applications' to be serialized so we can see what a user applied for
-    serialize_rules = ('-applications.user', '-password')
+    # Serialize rules to prevent infinite recursion and hide passwords
+    serialize_rules = ('-applications.user', '-password', '-jobs_posted.employer')
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String, nullable=False, unique=True)
@@ -29,10 +29,14 @@ class User(db.Model, SerializerMixin):
     
     about = db.Column(db.String)
     location = db.Column(db.String)
+    profile_picture = db.Column(db.String) # Added to match your frontend Image tags
     date_created = db.Column(db.DateTime, default=func.now())
     last_active = db.Column(db.DateTime, default=func.now(), onupdate=func.now())
 
+    # Relationships
     applications = db.relationship('Application', backref='user', cascade="all, delete-orphan")
+    # Link to jobs they created (if they are an employer)
+    jobs_posted = db.relationship('Job', backref='employer', lazy=True)
 
     @validates('email')
     def validate_email(self, key, email):
@@ -42,7 +46,7 @@ class User(db.Model, SerializerMixin):
 
 class Job(db.Model, SerializerMixin):
     __tablename__ = 'jobs'
-    serialize_rules = ('-applications.job',)
+    serialize_rules = ('-applications.job', '-employer.jobs_posted')
 
     id = db.Column(db.Integer, primary_key=True)
     company = db.Column(db.String, nullable=False)
@@ -51,18 +55,21 @@ class Job(db.Model, SerializerMixin):
     salary = db.Column(db.String)
     date_created = db.Column(db.DateTime, default=func.now())
 
+    # THE FIX: Link the job to the User (Employer) who created it
+    employer_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+
+    # Relationships
     applications = db.relationship('Application', backref='job', cascade="all, delete-orphan")
 
 class Application(db.Model, SerializerMixin):
     __tablename__ = 'applications'
-    # Crucial: We keep 'job' and 'user' so the Admin/Seeker knows what this application refers to
+    # Keep job and user info for the Talent Pipeline view
     serialize_rules = ('-user.applications', '-job.applications')
 
     id = db.Column(db.Integer, primary_key=True)
     
-    # NEW: Status field for the ATS logic
-    # Possible values: 'Pending', 'Accepted', 'Rejected'
-    status = db.Column(db.String, default='Pending')
+    # ATS logic: 'pending', 'accepted', 'rejected'
+    status = db.Column(db.String, default='pending')
     
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     job_id = db.Column(db.Integer, db.ForeignKey('jobs.id'), nullable=False)

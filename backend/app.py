@@ -59,7 +59,6 @@ class Login(Resource):
 class All_Users(Resource):
     @jwt_required()
     def get(self):
-        # Admin check
         admin_id = get_jwt_identity()
         admin = User.query.get(admin_id)
         if admin.user_role != 'admin':
@@ -79,7 +78,6 @@ class User_By_Id(Resource):
         current_user_id = get_jwt_identity()
         user = User.query.get_or_404(id)
         
-        # Only allow user to update self or an admin to update anyone
         admin = User.query.get(current_user_id)
         if str(current_user_id) != str(id) and admin.user_role != 'admin':
             return {"success": False, "message": "Unauthorized"}, 403
@@ -113,16 +111,19 @@ class Job_List(Resource):
 
     @jwt_required()
     def post(self):
-        user = User.query.get(get_jwt_identity())
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
         if user.user_type != 'employer' and user.user_role != 'admin':
             return {"success": False, "message": "Only employers can post jobs."}, 403
         
         data = request.get_json()
+        # FIXED: Now includes employer_id from JWT
         job = Job(
             company=data['company'],
             job_title=data['job_title'],
             job_description=data['job_description'],
-            salary=data.get('salary')
+            salary=data.get('salary'),
+            employer_id=user.id 
         )
         db.session.add(job)
         db.session.commit()
@@ -132,9 +133,12 @@ class Job_By_Id(Resource):
     @jwt_required()
     def delete(self, id):
         user = User.query.get(get_jwt_identity())
-        if user.user_role != 'admin' and user.user_type != 'employer':
-            return {"success": False, "message": "Unauthorized."}, 403
         job = Job.query.get_or_404(id)
+        
+        # Security: Only the owner of the job or an admin can delete it
+        if user.user_role != 'admin' and job.employer_id != user.id:
+            return {"success": False, "message": "Unauthorized."}, 403
+            
         db.session.delete(job)
         db.session.commit()
         return {"success": True, "message": "Job deleted."}, 200
@@ -164,16 +168,47 @@ class Apply(Resource):
             apps = Application.query.filter_by(user_id=user.id).all()
         return [a.to_dict() for a in apps], 200
 
+# NEW: Specific endpoint for the Employer Talent Pipeline
+class EmployerApplications(Resource):
+    @jwt_required()
+    def get(self):
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+
+        if user.user_type != 'employer' and user.user_role != 'admin':
+            return {"success": False, "message": "Unauthorized access"}, 403
+
+        # Join Jobs and Applications to find applicants for THIS employer's jobs
+        if user.user_role == 'admin':
+            apps = Application.query.all()
+        else:
+            apps = Application.query.join(Job).filter(Job.employer_id == user.id).all()
+
+        results = []
+        for app in apps:
+            results.append({
+                "id": app.id,
+                "job_title": app.job.job_title,
+                "seeker_name": app.user.username,
+                "seeker_email": app.user.email,
+                "seeker_about": app.user.about,
+                "status": app.status,
+                "applied_at": app.application_date.isoformat()
+            })
+        
+        return results, 200
+
 class Application_By_Id(Resource):
     @jwt_required()
     def patch(self, id):
         user = User.query.get(get_jwt_identity())
-        if user.user_type != 'employer' and user.user_role != 'admin':
-            return {"success": False, "message": "Permission denied."}, 403
-        
         app_record = Application.query.get_or_404(id)
-        data = request.get_json()
+
+        # Security: Only the employer who owns the job can change the status
+        if user.user_role != 'admin' and app_record.job.employer_id != user.id:
+             return {"success": False, "message": "Permission denied."}, 403
         
+        data = request.get_json()
         if 'status' in data:
             app_record.status = data['status']
             db.session.commit()
@@ -201,6 +236,7 @@ api.add_resource(Job_List, '/jobs')
 api.add_resource(Job_By_Id, '/jobs/<int:id>')
 api.add_resource(Apply, '/applications')
 api.add_resource(Application_By_Id, '/applications/<int:id>')
+api.add_resource(EmployerApplications, '/employer/applications') # NEW ROUTE
 
 if __name__ == "__main__":
     app.run(port=5555, debug=True)

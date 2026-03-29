@@ -1,68 +1,72 @@
-"use client"
-import React, { useState } from 'react'
-import Navbar from "../components/Navbar.jsx"
-import Link from 'next/link.js'
-import { useRouter } from "next/navigation"
+"use client";
+import React, { useState, ChangeEvent, FormEvent } from 'react';
+import Navbar from "@/src/components/Navbar"; // Updated to shared path
+import Link from 'next/link';
+import Image from 'next/image'; // Next.js optimized images
+import { useRouter } from "next/navigation";
 import { SiWorkplace } from "react-icons/si";
+import { useAuth } from "@/src/context/AuthContext"; // Use the context we created
 
 const Login = () => {
-    const router = useRouter()
+    const router = useRouter();
+    const { login } = useAuth(); // Hook into our Auth system
+    
     const [formData, setFormData] = useState({
         email: "",
         password: ""
-    })
-    const [message, setMessage] = useState({ text: "", isError: false })
+    });
+    
+    const [message, setMessage] = useState({ text: "", isError: false });
 
-    const handleInput = (e) => {
-        const { name, value } = e.target
-        setFormData({ ...formData, [name]: value })
-    }
+    const handleInput = (e: ChangeEvent<HTMLInputElement>) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+    };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault()
-        setMessage({ text: "Authenticating...", isError: false })
+    const handleSubmit = async (e: FormEvent) => {
+        e.preventDefault();
+        setMessage({ text: "Authenticating...", isError: false });
 
         try {
-            const response = await fetch("http://127.0.0.1:5555/login", {
+            const response = await fetch("http://127.0.0.1:5000/login", {
                 method: "POST",
-                headers: { "Content-type": "application/json" },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(formData)
-            })
+            });
 
-            const result = await response.json()
+            const result = await response.json();
 
-            if (result.success) {
-                // --- THE FIX IS HERE ---
-                // We save the token, the whole user object, AND the specific 'id' 
-                // so that the Profile page can find it easily.
-                localStorage.setItem("token", result.token)
-                localStorage.setItem("id", result.user.id) // <--- CRITICAL ADDITION
-                localStorage.setItem("user", JSON.stringify(result.user))
+            if (response.ok && result.success) {
+                // 1. Use the AuthContext login function to handle storage and state
+                login(result.token, result.user);
                 
-                setMessage({ text: result.message, isError: false })
+                setMessage({ text: result.message, isError: false });
 
+                // 2. Optimized Role-Based Redirection
                 setTimeout(() => {
-                    // Check role for redirection
                     if (result.user.user_role === "admin") {
-                        router.push("/jobs")
+                        router.push("/admin");
+                    } else if (result.user.user_type === "employer") {
+                        router.push("/employer");
                     } else {
-                        router.push("/userjobs")
+                        router.push("/seeker");
                     }
-                }, 1000)
+                }, 1000);
             } else {
-                setMessage({ text: result.message, isError: true })
+                setMessage({ text: result.message || "Invalid credentials", isError: true });
             }
         } catch (error) {
-            console.error("Login error:", error)
-            setMessage({ text: "Server connection failed.", isError: true })
+            console.error("Login error:", error);
+            setMessage({ text: "Server connection failed. Is Flask running?", isError: true });
         }
-    }
+    };
 
     return (
         <div className='min-h-screen w-full bg-[#040313] bg-gradient-to-br from-[#040313] via-[#0c093d] to-[#1a1464] text-white flex flex-col'>
-            <div className='flex w-full items-center justify-between p-6 px-[60px]'>
+            {/* Nav Section */}
+            <div className='flex w-full items-center justify-between p-6 px-10 lg:px-[60px]'>
                 <Link href="/">
-                    <div className='flex items-center gap-2 group'>
+                    <div className='flex items-center gap-2 group cursor-pointer'>
                         <SiWorkplace className='text-orange-500 text-2xl group-hover:scale-110 transition-transform' />
                         <div className='flex items-baseline'>
                             <p className='italic font-light text-xl tracking-tight'>vacan</p>
@@ -73,12 +77,17 @@ const Login = () => {
                 <Navbar />
             </div>
 
+            {/* Main Content */}
             <div className='flex-1 grid lg:grid-cols-2 items-center px-10 max-w-7xl mx-auto w-full'>
                 <div className='hidden lg:flex justify-center items-center'>
-                    <img 
-                        className='w-[450px] drop-shadow-[0_0_25px_rgba(67,31,151,0.5)]' 
+                    {/* Fixed Image component to resolve ESLint warning */}
+                    <Image 
                         src='/loginImage.png' 
                         alt="Login illustration"
+                        width={450}
+                        height={450}
+                        priority
+                        className='drop-shadow-[0_0_25px_rgba(67,31,151,0.5)] object-contain' 
                     />
                 </div>
 
@@ -86,18 +95,20 @@ const Login = () => {
                     <div className='w-full max-w-[420px] bg-white/5 backdrop-blur-xl border border-white/10 p-10 rounded-3xl shadow-2xl'>
                         <h1 className='text-3xl font-semibold mb-2'>Welcome Back</h1>
                         <p className='text-gray-400 text-sm mb-8'>
-                            Don't have an account? <Link className='text-orange-400 hover:text-orange-300 transition-colors' href="/signup">Sign up</Link>
+                            Don&apos;t have an account? <Link className='text-orange-400 hover:text-orange-300 transition-colors' href="/signup">Sign up</Link>
                         </p>
 
                         {message.text && (
-                            <div className={`mb-6 p-3 rounded-xl text-sm text-center ${message.isError ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
+                            <div className={`mb-6 p-3 rounded-xl text-sm text-center animate-in fade-in slide-in-from-top-1 ${
+                                message.isError ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'
+                            }`}>
                                 {message.text}
                             </div>
                         )}
 
                         <form onSubmit={handleSubmit} className='space-y-5'>
                             <div className='space-y-1'>
-                                <label className='text-xs text-gray-400 ml-1 uppercase tracking-wider'>Email Address</label>
+                                <label className='text-xs text-gray-400 ml-1 uppercase tracking-wider font-semibold'>Email Address</label>
                                 <input 
                                     className='w-full bg-white/10 border border-white/5 rounded-xl p-3 outline-none focus:ring-2 focus:ring-orange-500/50 focus:bg-white/15 transition-all text-sm' 
                                     type='email' 
@@ -110,7 +121,7 @@ const Login = () => {
                             </div>
 
                             <div className='space-y-1'>
-                                <label className='text-xs text-gray-400 ml-1 uppercase tracking-wider'>Password</label>
+                                <label className='text-xs text-gray-400 ml-1 uppercase tracking-wider font-semibold'>Password</label>
                                 <input 
                                     className='w-full bg-white/10 border border-white/5 rounded-xl p-3 outline-none focus:ring-2 focus:ring-orange-500/50 focus:bg-white/15 transition-all text-sm' 
                                     type='password' 
@@ -130,7 +141,7 @@ const Login = () => {
                 </div>
             </div>
         </div>
-    )
-}
+    );
+};
 
-export default Login
+export default Login;
