@@ -9,7 +9,7 @@ import {
     FaFileArrowDown, 
     FaCheck, 
     FaXmark, 
-    FaPhone, 
+    // FaPhone, 
     FaLocationDot,
     FaCircleCheck,
     FaCircleXmark,
@@ -30,8 +30,8 @@ const ApplicantManagement = () => {
         if (!token) return;
         setLoading(true);
         try {
-            // Updated endpoint to match your backend logic for employer applications
-            const res = await fetch("http://127.0.0.1:5000/employer/applications", {
+            // Updated to use the specific employer/admin endpoint
+            const res = await fetch("http://127.0.0.1:5000/applications", {
                 headers: { "Authorization": `Bearer ${token}` }
             });
             const data = await res.json();
@@ -39,7 +39,7 @@ const ApplicantManagement = () => {
                 setApplications(data);
             }
         } catch (err) {
-            console.error("Error fetching applicants:", err);
+            console.error("Link Failure: Talent feed unreachable", err);
         } finally {
             setLoading(false);
         }
@@ -51,28 +51,32 @@ const ApplicantManagement = () => {
 
     const updateStatus = async (id: number, newStatus: ApplicationStatus) => {
         try {
+            // This triggers the logic in our Flask Application_By_Id resource
             const response = await fetch(`http://127.0.0.1:5000/applications/${id}`, {
                 method: "PATCH",
                 headers: {
                     "Content-Type": "application/json",
                     "Authorization": `Bearer ${token}`
                 },
-                body: JSON.stringify({ status: newStatus })
+                body: JSON.stringify({ 
+                    status: newStatus.toLowerCase(),
+                    message: newStatus.toLowerCase() === 'accepted' 
+                        ? "Congratulations! Your profile has been shortlisted." 
+                        : "Thank you for applying. We have reviewed your profile and won't be moving forward at this time."
+                })
             });
 
             if (response.ok) {
-                // Update local state for the table
                 setApplications(prev => 
-                    prev.map(app => app.id === id ? { ...app, status: newStatus } : app)
+                    prev.map(app => app.id === id ? { ...app, status: newStatus.toLowerCase() } : app)
                 );
                 
-                // Update modal state if open
                 if (selectedApplicant?.id === id) {
-                    setSelectedApplicant(prev => prev ? { ...prev, status: newStatus } : null);
+                    setSelectedApplicant(prev => prev ? { ...prev, status: newStatus.toLowerCase() } : null);
                 }
             }
         } catch (error) {
-            console.error("Update failed:", error);
+            console.error("Protocol Error: Update failed", error);
         }
     };
 
@@ -83,7 +87,7 @@ const ApplicantManagement = () => {
                 {/* --- HEADER --- */}
                 <div className='flex items-center justify-between mb-12 px-2'>
                     <div className='flex items-center gap-6'>
-                        <Link href="/employer" className='p-3 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all group'>
+                        <Link href="/jobs" className='p-3 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all group'>
                             <FaChevronLeft size={14} className='group-hover:-translate-x-1 transition-transform' />
                         </Link>
                         <div>
@@ -100,7 +104,7 @@ const ApplicantManagement = () => {
                         <p className='text-[9px] text-gray-500 uppercase font-black tracking-widest'>Total Inbound</p>
                         <h3 className='text-3xl font-black mt-1'>{applications.length}</h3>
                     </div>
-                    <div className='bg-blue-500/5 p-6 rounded-[2rem] border border-blue-500/10'>
+                    <div className='bg-blue-500/5 p-6 rounded-[2rem] border border-blue-500/10 shadow-[0_0_20px_rgba(59,130,246,0.1)]'>
                         <p className='text-[9px] text-blue-500 uppercase font-black tracking-widest'>Pending Review</p>
                         <h3 className='text-3xl font-black mt-1'>{applications.filter(a => a.status?.toLowerCase() === 'pending').length}</h3>
                     </div>
@@ -161,7 +165,7 @@ const ApplicantManagement = () => {
                                             <div className='flex items-center gap-2'>
                                                 <div className='w-1.5 h-1.5 rounded-full bg-orange-500'></div>
                                                 <span className='text-xs font-bold text-gray-300'>
-                                                    {app.job?.job_title || "Position Removed"}
+                                                    {app.job?.job_title || "Position Terminated"}
                                                 </span>
                                             </div>
                                         </td>
@@ -177,15 +181,13 @@ const ApplicantManagement = () => {
                                         <td className='px-8 py-7'>
                                             <div className='flex items-center justify-end gap-3'>
                                                 <button 
-                                                    onClick={() => updateStatus(app.id, 'Accepted')} 
-                                                    title="Accept"
+                                                    onClick={() => updateStatus(app.id, 'accepted')} 
                                                     className='p-2.5 bg-green-500/10 hover:bg-green-500 text-green-500 hover:text-white rounded-xl transition-all border border-green-500/20'
                                                 >
                                                     <FaCheck size={14} />
                                                 </button>
                                                 <button 
-                                                    onClick={() => updateStatus(app.id, 'Rejected')} 
-                                                    title="Decline"
+                                                    onClick={() => updateStatus(app.id, 'rejected')} 
                                                     className='p-2.5 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-xl transition-all border border-red-500/20'
                                                 >
                                                     <FaXmark size={14} />
@@ -255,21 +257,32 @@ const ApplicantManagement = () => {
                                 <div>
                                     <h4 className='text-[10px] uppercase font-black text-gray-500 tracking-[0.2em] mb-3'>Node Biography</h4>
                                     <p className='text-sm text-gray-300 leading-relaxed font-medium bg-white/5 p-5 rounded-3xl border border-white/5'>
-                                        &quot;{selectedApplicant.user?.about || "This seeker has not provided a detailed bio. Please refer to their resume for specialized skill sets and experience metrics."}&quot;
+                                        &quot;{selectedApplicant.user?.about || "This seeker has not provided a detailed bio. Refer to their resume for specialized skill sets."}&quot;
                                     </p>
                                 </div>
                                 
                                 <div className='space-y-4'>
                                     <h4 className='text-[10px] uppercase font-black text-gray-500 tracking-[0.2em]'>Verified Assets</h4>
-                                    <div className='flex items-center justify-between bg-gradient-to-r from-white/5 to-transparent p-4 rounded-2xl border border-white/10 group cursor-pointer hover:border-orange-500/30 transition-all'>
-                                        <div className='flex items-center gap-4'>
-                                            <div className='p-3 bg-orange-500/10 text-orange-500 rounded-xl'><FaFileArrowDown size={18} /></div>
-                                            <div>
-                                                <p className='text-xs font-black'>Curriculum_Vitae.pdf</p>
-                                                <p className='text-[9px] text-gray-500 uppercase font-bold mt-0.5'>2.4 MB • Updated Recently</p>
+                                    {selectedApplicant.user?.cv_url ? (
+                                        <a 
+                                            href={`http://127.0.0.1:5000/${selectedApplicant.user.cv_url}`} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className='flex items-center justify-between bg-gradient-to-r from-orange-500/10 to-transparent p-4 rounded-2xl border border-orange-500/20 group cursor-pointer hover:border-orange-500/50 transition-all'
+                                        >
+                                            <div className='flex items-center gap-4'>
+                                                <div className='p-3 bg-orange-500/10 text-orange-500 rounded-xl'><FaFileArrowDown size={18} /></div>
+                                                <div>
+                                                    <p className='text-xs font-black'>Download_Curriculum_Vitae.pdf</p>
+                                                    <p className='text-[9px] text-gray-500 uppercase font-bold mt-0.5'>Secure Link Verified</p>
+                                                </div>
                                             </div>
+                                        </a>
+                                    ) : (
+                                        <div className='p-4 bg-white/5 rounded-2xl border border-white/5 text-[10px] uppercase font-black text-gray-500 text-center italic'>
+                                            No CV Uplinked by Seeker
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -281,9 +294,6 @@ const ApplicantManagement = () => {
                                             <FaEnvelope className='text-orange-500' /> {selectedApplicant.user?.email}
                                         </div>
                                         <div className='flex items-center gap-3 text-xs font-bold text-gray-400'>
-                                            <FaPhone className='text-orange-500' /> {selectedApplicant.user?.location ? '+254 ' + Math.floor(Math.random() * 10000000) : "No Contact"}
-                                        </div>
-                                        <div className='flex items-center gap-3 text-xs font-bold text-gray-400'>
                                             <FaLocationDot className='text-orange-500' /> {selectedApplicant.user?.location || "Remote Node"}
                                         </div>
                                     </div>
@@ -291,14 +301,14 @@ const ApplicantManagement = () => {
 
                                 <div className='pt-8 border-t border-white/10 flex flex-col gap-3'>
                                     <button 
-                                        onClick={() => updateStatus(selectedApplicant.id, 'Accepted')}
+                                        onClick={() => updateStatus(selectedApplicant.id, 'accepted')}
                                         className={`w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl shadow-green-900/20
                                             ${selectedApplicant.status?.toLowerCase() === 'accepted' ? 'bg-green-500 text-white' : 'bg-white/5 hover:bg-green-600 text-green-400 hover:text-white border border-green-500/20'}`}
                                     >
                                         {selectedApplicant.status?.toLowerCase() === 'accepted' ? 'Node Shortlisted' : 'Approve Candidate'}
                                     </button>
                                     <button 
-                                        onClick={() => updateStatus(selectedApplicant.id, 'Rejected')}
+                                        onClick={() => updateStatus(selectedApplicant.id, 'rejected')}
                                         className={`w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all
                                             ${selectedApplicant.status?.toLowerCase() === 'rejected' ? 'bg-red-500 text-white' : 'bg-white/5 hover:bg-red-600/20 hover:text-red-400 border border-white/5'}`}
                                     >

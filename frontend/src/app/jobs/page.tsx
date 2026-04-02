@@ -1,26 +1,22 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 "use client";
-import React, { useEffect, useState, ChangeEvent, FormEvent, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import Navbar from '@/src/components/Navbar';
 import Link from 'next/link';
 import Image from 'next/image';
 import { SiWorkplace } from "react-icons/si";
-import { FaBars, FaTrash, FaPeopleGroup, FaCheckDouble, FaCheck, FaEye } from "react-icons/fa6";
+import { FaTrash, FaPeopleGroup, FaCheckDouble, FaCheck, FaEye, FaArrowRight, FaRotateRight, FaTerminal, FaXmark } from "react-icons/fa6";
 import { TbBadgeFilled, TbBriefcase } from "react-icons/tb";
 import { useAuth } from '@/src/context/AuthContext';
 import { Job, Application } from '@/src/types';
 import { MdPostAdd } from 'react-icons/md';
 import { ImSpinner2 } from "react-icons/im";
 
-interface ApplicationResponse {
-    job_id?: number;
-    job?: { id: number };
-}
-
 const JobsPage = () => {
     const { user, token } = useAuth();
     const [jobs, setJobs] = useState<Job[]>([]);
-    const [applications, setApplications] = useState<Application[]>([]); // To track applicant counts
     const [appliedJobIds, setAppliedJobIds] = useState<number[]>([]); 
+    
     const [formData, setFormData] = useState({
         company: "",
         job_title: "",
@@ -28,49 +24,57 @@ const JobsPage = () => {
         salary: ""
     });
     
-    // UI States
+    // UI Feedback States
     const [message, setMessage] = useState({ text: "", isError: false });
+    const [serverNotification, setServerNotification] = useState<string | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [loadingJobId, setLoadingJobId] = useState<number | null>(null);
     const [successJobId, setSuccessJobId] = useState<number | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [successSubmit, setSuccessSubmit] = useState(false);
 
+    // Normalize roles for logic
     const userRole = user?.user_role?.toString().toLowerCase();
     const userType = user?.user_type?.toString().toLowerCase();
-
     const isAdmin = userRole === 'admin';
     const isEmployer = userType === 'employer' || userRole === 'employer';
-    const isSeeker = userType === 'seeker' || userRole === 'seeker';
+    const isSeeker = !isAdmin && !isEmployer;
 
-    // Fetch applications to calculate counts and user status
-    const fetchApplications = useCallback(async () => {
-        if (!token) return;
-        try {
-            const res = await fetch("http://127.0.0.1:5000/applications", {
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-            const data = await res.json();
-            if (Array.isArray(data)) {
-                setApplications(data);
-                if (isSeeker) {
-                    const ids = data.map((app: ApplicationResponse) => app.job_id || app.job?.id).filter(Boolean) as number[];
-                    setAppliedJobIds(ids);
-                }
+    // --- API ACTIONS ---
+
+const fetchApplications = useCallback(async () => {
+    if (!token) return;
+    
+    try {
+        const res = await fetch("http://127.0.0.1:5000/applications", {
+            headers: { 
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
             }
-        } catch (err) {
-            console.error("Error fetching applications:", err);
+        });
+
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+
+        const data: Application[] = await res.json();
+        
+        if (Array.isArray(data)) {
+            // Replaced (app: any) with (app: Application)
+            const ids = data.map((app: Application) => app.job_id);
+            setAppliedJobIds(ids);
         }
-    }, [token, isSeeker]);
+    } catch (err) {
+        console.error("Link Failure: Applications feed unreachable", err);
+    }
+}, [token]);
 
     const fetchJobs = useCallback(async () => {
         setIsRefreshing(true);
         try {
             const res = await fetch("http://127.0.0.1:5000/jobs");
             const data = await res.json();
-            setJobs(data);
+            setJobs(Array.isArray(data) ? data : []);
         } catch (err) {
-            console.error("Error fetching jobs:", err);
+            console.error("Link Failure: Global job feed offline", err);
         } finally {
             setIsRefreshing(false);
         }
@@ -81,14 +85,13 @@ const JobsPage = () => {
         fetchApplications();
     }, [fetchJobs, fetchApplications]);
 
-    // FILTER LOGIC: Employers only see their own creations
-    const displayJobs = isEmployer && !isAdmin 
-        ? jobs.filter(j => j.user_id === user?.id) 
-        : jobs;
+    // --- HANDLERS ---
 
     const handleApply = async (jobId: number) => {
         if (!token || loadingJobId) return;
         setLoadingJobId(jobId);
+        setMessage({ text: "", isError: false });
+
         try {
             const res = await fetch("http://127.0.0.1:5000/applications", {
                 method: "POST",
@@ -98,31 +101,31 @@ const JobsPage = () => {
                 },
                 body: JSON.stringify({ job_id: jobId })
             });
-            const result = await res.json();
+            
+            const data = await res.json();
+
             if (res.ok) {
                 setSuccessJobId(jobId);
                 setAppliedJobIds(prev => [...prev, jobId]);
-                setTimeout(() => setSuccessJobId(null), 2000);
+                // Set the automated message from backend
+                setServerNotification(data.message || "Transmission success. Application logged in core.");
+                setTimeout(() => { setSuccessJobId(null); }, 3000);
             } else {
-                setMessage({ text: result.message || "Failed to apply.", isError: true });
+                setMessage({ text: data.message || "Protocol Error: Already Applied.", isError: true });
             }
         } catch (err) {
-            console.error("Apply error:", err);
-            setMessage({ text: "Connection error.", isError: true });
+            setMessage({ text: "Critical Link Failure.", isError: true });
         } finally {
             setLoadingJobId(null);
         }
     };
 
-    const handleInput = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-        const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
-    };
-
-    const handleSubmit = async (e: FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!token || isSubmitting) return;
         setIsSubmitting(true);
+        setMessage({ text: "", isError: false });
+
         try {
             const response = await fetch("http://127.0.0.1:5000/jobs", {
                 method: "POST",
@@ -132,27 +135,26 @@ const JobsPage = () => {
                 },
                 body: JSON.stringify(formData)
             });
-            const result = await response.json();
-            if (result.success || response.ok) {
-                // If backend returns the new job, update state immediately
-                const newJob = result.job || result;
+
+            if (response.ok) {
+                const newJob = await response.json();
                 setJobs(prev => [newJob, ...prev]);
                 setFormData({ company: "", job_title: "", job_description: "", salary: "" });
                 setSuccessSubmit(true);
-                setTimeout(() => setSuccessSubmit(false), 3000);
+                setMessage({ text: "Node deployed to global feed.", isError: false });
+                setTimeout(() => { setSuccessSubmit(false); setMessage({ text: "", isError: false }); }, 3000);
             } else {
-                setMessage({ text: result.message || "Failed to post", isError: true });
+                setMessage({ text: "Security override: Deployment unauthorized.", isError: true });
             }
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        } catch (_error) {
-            setMessage({ text: "Failed to connect to server.", isError: true });
+        } catch (err) {
+            setMessage({ text: "Sync lost with central server.", isError: true });
         } finally {
             setIsSubmitting(false);
         }
     };
 
     const handleDelete = async (jobId: number) => {
-        if (!window.confirm("Purge this vacancy from system core?") || !token) return;
+        if (!window.confirm("Confirm deletion: Permanent purge of node from system?")) return;
         try {
             const response = await fetch(`http://127.0.0.1:5000/jobs/${jobId}`, {
                 method: "DELETE",
@@ -160,191 +162,241 @@ const JobsPage = () => {
             });
             if (response.ok) {
                 setJobs(prev => prev.filter((j) => j.id !== jobId));
+                setMessage({ text: "Node purged successfully.", isError: false });
+                setTimeout(() => setMessage({ text: "", isError: false }), 3000);
             }
         } catch (error) {
-            console.error("Delete failed:", error);
+            console.error("Purge failed:", error);
         }
     };
 
     return (
-        <div className='min-h-screen bg-[#040313] bg-gradient-to-br from-[#040313] to-[#0c093d] text-white p-6'>
-            <div className='flex items-center justify-between mb-12 px-4 max-w-7xl mx-auto pt-10'>
-                <Link href="/" className='flex items-center gap-2 group'>
-                    <SiWorkplace className='text-orange-500 text-3xl group-hover:rotate-12 transition-transform' />
-                    <p className='italic text-2xl tracking-tighter uppercase font-medium'>Vacan<span className='font-black text-orange-500 not-italic'>C</span></p>
-                </Link>
-                <Navbar />
-                <div className='flex items-center gap-4'>
-                    <Link href={getProfileLink(userRole, userType)} className='hover:scale-105 transition-transform'>
-                        <div className={`w-11 h-11 rounded-2xl border-2 ${isAdmin ? 'border-red-500/50' : 'border-orange-500/50'} p-0.5 overflow-hidden`}>
-                            <div className='relative w-full h-full rounded-xl overflow-hidden'>
-                                <Image src={user?.profile_picture || '/usericon.png'} alt='profile' fill className='object-cover' />
+        <div className='min-h-screen bg-[#040313] bg-gradient-to-br from-[#040313] via-[#0c093d] to-[#14114d] text-white p-6 selection:bg-orange-500/30'>
+            
+            {/* --- SYSTEM NOTIFICATION OVERLAY --- */}
+            {serverNotification && (
+                <div className="fixed bottom-10 right-10 z-[200] w-full max-w-sm animate-in slide-in-from-right-10 duration-500">
+                    <div className="bg-[#080625] border border-orange-500/30 p-6 rounded-[2rem] shadow-2xl shadow-orange-900/20 backdrop-blur-2xl relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-1 h-full bg-orange-500"></div>
+                        <div className="flex items-start gap-4">
+                            <div className="bg-orange-500/20 p-3 rounded-xl text-orange-400">
+                                <FaTerminal size={16} />
                             </div>
+                            <div className="flex-1">
+                                <p className="text-[9px] font-black uppercase tracking-widest text-orange-500 mb-1">Incoming Signal</p>
+                                <p className="text-xs font-medium italic text-gray-200 leading-relaxed">&quot;{serverNotification}&quot;</p>
+                            </div>
+                            <button onClick={() => setServerNotification(null)} className="text-gray-600 hover:text-white">
+                                <FaXmark />
+                            </button>
                         </div>
-                    </Link>
+                    </div>
                 </div>
-            </div>
+            )}
 
-            <div className='grid grid-cols-1 md:grid-cols-12 gap-8 max-w-7xl mx-auto'>
-                {/* Profile Sidebar */}
-                <div className='md:col-span-3 space-y-6'>
-                    <div className='bg-white/5 backdrop-blur-xl border border-white/10 p-8 rounded-[2.5rem] text-center shadow-2xl relative overflow-hidden group'>
-                        <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${isAdmin ? 'from-red-500 to-orange-600' : 'from-orange-500 to-purple-600'}`}></div>
-                        <div className='relative w-24 h-24 mx-auto mb-4 p-1 border-2 border-dashed border-gray-600 rounded-full group-hover:border-orange-500 transition-colors'>
+            <header className='flex items-center justify-between mb-12 px-4 max-w-7xl mx-auto pt-6 border-b border-white/5 pb-8'>
+                <div className='flex flex-col'>
+                    <Link href="/" className='flex items-center gap-2 group mb-1'>
+                        <SiWorkplace className='text-orange-500 text-2xl group-hover:rotate-12 transition-transform' />
+                        <p className='italic text-xl font-black tracking-tighter uppercase'>Vacan<span className='text-orange-500 not-italic'>C</span></p>
+                    </Link>
+                    <span className='text-[8px] uppercase tracking-[0.4em] text-gray-500 font-black'>Sector OS v2.4.0</span>
+                </div>
+                <Navbar />
+                <div className='flex items-center gap-4 bg-white/5 p-2 pr-6 rounded-2xl border border-white/10'>
+                    <Link href={getProfileLink(userRole, userType)} className='w-10 h-10 rounded-xl border-2 border-orange-500/30 overflow-hidden relative'>
+                        <Image src={user?.profile_picture || '/usericon.png'} alt='profile' fill className='object-cover' />
+                    </Link>
+                    <div className='hidden sm:block'>
+                        <p className='text-xs font-black truncate max-w-[100px]'>{user?.username || "Guest_Node"}</p>
+                        <p className='text-[8px] uppercase font-black text-orange-500 animate-pulse'>Secure Connection</p>
+                    </div>
+                </div>
+            </header>
+
+            {message.text && (
+                <div className={`max-w-7xl mx-auto mb-8 p-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] text-center border animate-in slide-in-from-top-4 duration-300 ${message.isError ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-green-500/10 border-green-500/20 text-green-400'}`}>
+                    {message.text}
+                </div>
+            )}
+
+            <div className='grid grid-cols-1 md:grid-cols-12 gap-10 max-w-7xl mx-auto'>
+                <aside className='md:col-span-3 space-y-6'>
+                    <div className='bg-white/5 backdrop-blur-2xl border border-white/10 p-8 rounded-[2.5rem] text-center shadow-2xl relative overflow-hidden group'>
+                        <div className={`absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r ${isAdmin ? 'from-red-600 to-red-400' : 'from-orange-600 to-purple-600'}`}></div>
+                        <div className='relative w-24 h-24 mx-auto mb-6 p-1.5 border-2 border-dashed border-gray-700 rounded-full'>
                             <Image className='rounded-full object-cover' src={user?.profile_picture || '/usericon.png'} alt='avatar' fill />
                         </div>
-                        <h2 className='text-xl font-black tracking-tight'>{user?.username || "Guest"}</h2>
-                        <p className={`text-[10px] font-black mt-2 uppercase tracking-widest ${isAdmin ? 'text-red-500' : 'text-orange-500'}`}>
-                            {isAdmin ? '🛡️ System Admin' : isEmployer ? '🏢 Employer Unit' : '🚀 Seeker Node'}
+                        <h2 className='text-xl font-black tracking-tight mb-1'>{user?.username || "Unknown_User"}</h2>
+                        <p className={`text-[10px] font-black uppercase tracking-[0.2em] ${isAdmin ? 'text-red-500' : 'text-orange-500'}`}>
+                            {isAdmin ? '🛡️ Global Admin' : isEmployer ? '🏢 Employer Node' : '🚀 Seeker Node'}
                         </p>
+                        
+                        <Link href={isEmployer ? "/employer/applicants" : "/seeker/applied"} className='mt-8 flex items-center justify-center gap-3 bg-white/5 hover:bg-orange-600 hover:text-white transition-all py-4 rounded-2xl border border-white/10 text-[9px] font-black uppercase tracking-widest group'>
+                             {isEmployer ? "Manage Recruitment" : "Application History"} <FaArrowRight className='group-hover:translate-x-1 transition-transform'/>
+                        </Link>
                     </div>
 
-                    <div className='bg-white/5 backdrop-blur-md border border-white/10 rounded-[2rem] overflow-hidden shadow-xl'>
-                        <div className='p-4 bg-white/5 text-[10px] uppercase tracking-[0.2em] font-black text-gray-500 px-6'>Command Center</div>
+                    <div className='bg-white/5 backdrop-blur-md border border-white/10 rounded-[2.5rem] overflow-hidden'>
+                        <div className='p-5 bg-white/5 text-[9px] uppercase tracking-[0.2em] font-black text-gray-500 px-8 border-b border-white/5'>Sector Navigation</div>
                         {isSeeker && (
-                            <Link href="/seeker/applied" className='w-full flex items-center gap-3 px-6 py-4 hover:bg-white/10 transition-all text-sm border-b border-white/5'>
-                                <TbBadgeFilled className='text-green-400' size={20} /> My Applications
+                            <Link href="/seeker/applied" className='w-full flex items-center gap-4 px-8 py-5 hover:bg-white/10 transition-all text-xs font-bold border-b border-white/5'>
+                                <TbBadgeFilled className='text-green-500' size={18} /> Active Offers
                             </Link>
                         )}
                         {isEmployer && (
-                             <Link href="/employer/applicants" className='w-full flex items-center gap-3 px-6 py-4 hover:bg-white/10 transition-all text-sm border-b border-white/5'>
-                                <FaPeopleGroup className='text-blue-400' size={20} /> Review Applicants
+                             <Link href="/employer/applicants" className='w-full flex items-center gap-4 px-8 py-5 hover:bg-white/10 transition-all text-xs font-bold border-b border-white/5'>
+                                <FaPeopleGroup className='text-blue-500' size={18} /> Incoming Talent
                              </Link>
                         )}
-                        <Link href="/jobs" className='w-full flex items-center gap-3 px-6 py-4 hover:bg-white/10 transition-all text-sm'>
-                            <TbBriefcase className='text-orange-500' size={20} /> {isEmployer ? "Manage My Jobs" : "Browse All"}
+                        <Link href="/jobs" className='w-full flex items-center gap-4 px-8 py-5 hover:bg-white/10 transition-all text-xs font-bold'>
+                            <TbBriefcase className='text-orange-500' size={18} /> Global Uplink
                         </Link>
                     </div>
-                </div>
+                </aside>
 
-                {/* Main Feed */}
-                <div className='md:col-span-6 space-y-6'>
-                    <div className='flex items-center justify-between'>
+                <main className='md:col-span-6 space-y-6'>
+                    <div className='flex items-center justify-between px-2'>
                         <h1 className='text-3xl font-black tracking-tighter'>
-                            {isEmployer && !isAdmin ? "Proprietary Vacancies" : "Global Node Feed"}
+                            {isEmployer && !isAdmin ? "Managed Nodes" : "Global Job Sync"}
                         </h1>
-                        <button onClick={fetchJobs} className={`p-2 rounded-full hover:bg-white/10 transition-all ${isRefreshing ? 'animate-spin' : ''}`}>
-                             <FaBars className='text-orange-500' />
+                        <button onClick={fetchJobs} className={`p-3 bg-white/5 rounded-full hover:bg-white/10 transition-all ${isRefreshing ? 'animate-spin text-orange-500' : 'text-gray-500'}`}>
+                            <FaRotateRight />
                         </button>
                     </div>
 
-                    {message.text && (
-                         <div className={`p-4 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-center border animate-in fade-in slide-in-from-top-2 duration-300 ${message.isError ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-green-500/10 border-green-500/20 text-green-400'}`}>
-                            {message.text}
-                        </div>
-                    )}
+                    <div className='space-y-5 overflow-y-auto pr-2 custom-scrollbar' style={{ maxHeight: '75vh' }}>
+                        {jobs.length > 0 ? jobs.map((job) => {
+                            const alreadyApplied = appliedJobIds.includes(job.id);
+                            const isApplying = loadingJobId === job.id;
+                            const isSuccessful = successJobId === job.id;
+                            const isOwner = (job.employer_id === user?.id) || isAdmin;
 
-                    <div className='space-y-4 overflow-y-auto pr-3 custom-scrollbar' style={{ maxHeight: 'calc(100vh - 280px)' }}>
-                        {displayJobs.length > 0 ? displayJobs.map((kazi) => {
-                            const alreadyApplied = appliedJobIds.includes(kazi.id);
-                            const isThisLoading = loadingJobId === kazi.id;
-                            const isThisSuccess = successJobId === kazi.id;
-                            
-                            // Count applications for this specific job
-                            const applicantCount = applications.filter(app => (app.job_id || app.job?.id) === kazi.id).length;
-                            
                             return (
-                                <div key={kazi.id} className='bg-white/5 border border-white/10 p-6 rounded-3xl hover:bg-white/[0.08] transition-all group relative'>
-                                    <div className='flex gap-5'>
-                                        <div className='w-14 h-14 bg-gradient-to-br from-purple-500/20 to-blue-500/20 rounded-2xl flex items-center justify-center border border-white/10 shrink-0'>
-                                            <Image src='/rocket1.png' width={32} height={32} alt='icon' />
+                                <div key={job.id} className='bg-white/5 backdrop-blur-md border border-white/10 p-8 rounded-[2.5rem] hover:bg-white/[0.08] transition-all group relative shadow-xl'>
+                                    <div className='flex gap-6'>
+                                        <div className='w-14 h-14 bg-gradient-to-br from-orange-500/20 to-transparent rounded-2xl flex items-center justify-center border border-white/10 shrink-0'>
+                                            <Image src='/rocket1.png' width={30} height={30} alt='icon' className='opacity-80' />
                                         </div>
                                         <div className='flex-1'>
-                                            <div className='flex justify-between items-start'>
-                                                <h3 className='font-bold text-orange-400 text-lg'>{kazi.job_title}</h3>
-                                                {isEmployer && (
-                                                    <div className='flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full text-[9px] font-black text-blue-400 uppercase tracking-tighter'>
-                                                        <FaPeopleGroup /> {applicantCount} Candidates
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <p className='text-sm font-semibold text-gray-300'>{kazi.company}</p>
-                                            <p className='text-xs text-gray-400 mt-2 line-clamp-2'>{kazi.job_description}</p>
+                                            <h3 className='font-black text-orange-400 text-lg tracking-tight mb-1'>{job.job_title}</h3>
+                                            <p className='text-[10px] font-black uppercase text-gray-400 tracking-widest'>{job.company}</p>
+                                            <p className='text-xs text-gray-500 mt-4 line-clamp-2 leading-relaxed'>{job.job_description}</p>
                                             
-                                            <div className='mt-6 flex items-center justify-between'>
-                                                <span className='text-[10px] font-black text-green-400 bg-green-400/10 px-3 py-1 rounded-full border border-green-400/20'>
-                                                    {kazi.salary || "Competitive"}
+                                            <div className='mt-8 flex items-center justify-between'>
+                                                <span className='text-[10px] font-black text-green-400 bg-green-400/5 px-4 py-2 rounded-xl border border-green-400/10 uppercase tracking-widest'>
+                                                    {job.salary || "TBD"}
                                                 </span>
                                                 
-                                                {isSeeker && !isAdmin && (
-                                                    alreadyApplied && !isThisSuccess ? (
-                                                        <div className='flex items-center gap-2 text-green-400 bg-green-400/10 px-4 py-2 rounded-xl border border-green-500/30 text-[10px] font-bold uppercase tracking-wider'>
-                                                            <FaCheckDouble size={14} /> Applied
-                                                        </div>
-                                                    ) : (
-                                                        <button 
-                                                            disabled={loadingJobId !== null}
-                                                            onClick={() => handleApply(kazi.id)}
-                                                            className={`text-xs px-6 py-2 rounded-xl transition-all font-bold shadow-lg flex items-center gap-2 
-                                                                ${isThisSuccess ? 'bg-green-500 text-white' : 'bg-orange-600 hover:bg-orange-500 text-white'}`}
-                                                        >
-                                                            {isThisLoading ? <ImSpinner2 className="animate-spin" /> : isThisSuccess ? <FaCheck /> : "Quick Apply"}
-                                                        </button>
-                                                    )
-                                                )}
+                                                <div className='flex items-center gap-3'>
+                                                    {isSeeker && (
+                                                        alreadyApplied && !isSuccessful ? (
+                                                            <div className='text-green-400 text-[10px] font-black uppercase tracking-widest bg-green-500/10 px-6 py-3 rounded-2xl border border-green-500/20 flex items-center gap-2'>
+                                                                <FaCheckDouble /> Applied
+                                                            </div>
+                                                        ) : (
+                                                            <button 
+                                                                disabled={isApplying}
+                                                                onClick={() => handleApply(job.id)}
+                                                                className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 active:scale-95
+                                                                    ${isSuccessful ? 'bg-green-600 text-white' : 'bg-orange-600 hover:bg-orange-500 text-white'}`}
+                                                            >
+                                                                {isApplying ? <ImSpinner2 className='animate-spin' /> : isSuccessful ? <FaCheck /> : "Initiate Apply"}
+                                                            </button>
+                                                        )
+                                                    )}
 
-                                                {isEmployer && !isAdmin && (
-                                                    <Link href="/employer/applicants" className='flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-colors bg-white/5 px-4 py-2 rounded-xl border border-white/5'>
-                                                        <FaEye /> View Apps
-                                                    </Link>
-                                                )}
+                                                    {(isEmployer && isOwner) && (
+                                                        <Link href="/employer/applicants" className='text-[9px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-colors bg-white/5 px-5 py-3 rounded-2xl border border-white/5 flex items-center gap-2'>
+                                                            <FaEye /> Stats
+                                                        </Link>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
-                                    {(isAdmin || (isEmployer && kazi.user_id === user?.id)) && (
-                                        <button onClick={() => handleDelete(kazi.id)} className='absolute top-6 right-6 p-2 text-gray-500 hover:text-red-500 transition-colors'>
-                                            <FaTrash size={12} />
+                                    {isOwner && (
+                                        <button onClick={() => handleDelete(job.id)} className='absolute top-8 right-8 p-2 text-gray-700 hover:text-red-500 transition-colors'>
+                                            <FaTrash size={14} />
                                         </button>
                                     )}
                                 </div>
                             );
                         }) : (
-                            <div className='py-20 text-center border-2 border-dashed border-white/5 rounded-[3rem]'>
-                                <TbBriefcase className='mx-auto text-gray-600 mb-4' size={48}/>
-                                <p className='text-gray-500 font-bold uppercase text-xs tracking-widest'>No nodes found in your sector</p>
+                            <div className='py-32 text-center border-2 border-dashed border-white/5 rounded-[3rem]'>
+                                <TbBriefcase className='mx-auto text-gray-800 mb-6' size={64}/>
+                                <p className='text-gray-600 font-black uppercase text-[10px] tracking-widest'>No active sectors detected.</p>
                             </div>
                         )}
                     </div>
-                </div>
+                </main>
 
-                {/* Form Column */}
-                <div className='md:col-span-3 space-y-6'>
+                <aside className='md:col-span-3'>
                     {(isEmployer || isAdmin) ? (
-                        <div className='bg-white/5 backdrop-blur-xl border border-white/10 p-8 rounded-[2.5rem] shadow-2xl relative'>
-                            <h2 className='text-lg font-black tracking-tight mb-6 flex items-center gap-2'>
-                                <MdPostAdd className='text-orange-500' /> Deploy Vacancy
-                            </h2>
+                        <div className='bg-[#0c093d] border border-white/10 p-8 rounded-[3rem] shadow-2xl sticky top-8'>
+                            <div className='flex items-center gap-3 mb-8'>
+                                <div className='w-3 h-3 bg-orange-500 rounded-full shadow-[0_0_15px_rgba(249,115,22,0.5)]'></div>
+                                <h2 className='text-lg font-black tracking-tight uppercase'>Post Vacancy</h2>
+                            </div>
                             <form onSubmit={handleSubmit} className='space-y-4'>
-                                <input name='company' value={formData.company} onChange={handleInput} placeholder='Entity Name' className='w-full bg-white/5 border border-white/10 rounded-2xl p-3 text-xs outline-none focus:border-orange-500/50' required />
-                                <input name='job_title' value={formData.job_title} onChange={handleInput} placeholder='Core Role' className='w-full bg-white/5 border border-white/10 rounded-2xl p-3 text-xs outline-none focus:border-orange-500/50' required />
-                                <textarea name='job_description' value={formData.job_description} onChange={handleInput} placeholder='Mission Parameters...' className='w-full bg-white/5 border border-white/10 rounded-2xl p-3 text-xs outline-none focus:border-orange-500/50 h-28 resize-none' required />
-                                <input name='salary' value={formData.salary} onChange={handleInput} placeholder='Budget Band' className='w-full bg-white/5 border border-white/10 rounded-2xl p-3 text-xs outline-none focus:border-orange-500/50' />
+                                <input 
+                                    name='job_title' 
+                                    value={formData.job_title} 
+                                    onChange={(e) => setFormData({...formData, job_title: e.target.value})} 
+                                    placeholder='Job Title' 
+                                    className='w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-bold outline-none focus:border-orange-500 transition-all text-white' 
+                                    required 
+                                />
+                                <input 
+                                    name='company' 
+                                    value={formData.company} 
+                                    onChange={(e) => setFormData({...formData, company: e.target.value})} 
+                                    placeholder='Company Name' 
+                                    className='w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-bold outline-none focus:border-orange-500 transition-all text-white' 
+                                    required 
+                                />
+                                <input 
+                                    name='salary' 
+                                    value={formData.salary} 
+                                    onChange={(e) => setFormData({...formData, salary: e.target.value})} 
+                                    placeholder='Salary (e.g. 100k - 150k)' 
+                                    className='w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-bold outline-none focus:border-orange-500 transition-all text-white' 
+                                />
+                                <textarea 
+                                    name='job_description' 
+                                    value={formData.job_description} 
+                                    onChange={(e) => setFormData({...formData, job_description: e.target.value})} 
+                                    placeholder='Description & Requirements' 
+                                    className='w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-bold outline-none focus:border-orange-500 h-32 resize-none transition-all text-white' 
+                                    required 
+                                />
+                                
                                 <button 
                                     disabled={isSubmitting}
-                                    className={`w-full font-black py-4 rounded-2xl text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2
-                                        ${successSubmit ? 'bg-green-500 text-white' : 'bg-gradient-to-r from-orange-600 to-red-600 text-white hover:brightness-110'}`}
+                                    type="submit"
+                                    className={`w-full font-black py-5 rounded-2xl text-[10px] uppercase tracking-[0.3em] transition-all flex items-center justify-center gap-3
+                                        ${successSubmit ? 'bg-green-600 text-white' : 'bg-orange-600 hover:bg-orange-500 text-white'}`}
                                 >
-                                    {isSubmitting ? <ImSpinner2 className="animate-spin" size={14}/> : successSubmit ? <FaCheck size={14}/> : "Transmit Post"}
+                                    {isSubmitting ? <ImSpinner2 className="animate-spin" /> : successSubmit ? <FaCheck /> : <><MdPostAdd size={18}/> Deploy Node</>}
                                 </button>
                             </form>
                         </div>
                     ) : (
-                        <div className='bg-gradient-to-br from-orange-600/10 to-transparent border border-white/5 p-8 rounded-[2.5rem] text-center'>
-                             <TbBriefcase className='text-orange-500 mx-auto mb-4' size={32} />
-                            <h4 className='text-sm font-bold'>Elite Access</h4>
-                            <p className='text-[11px] text-gray-500 mt-3 leading-relaxed'>Switch to an Employer account to broadcast your openings globally.</p>
+                        <div className='bg-white/5 border border-white/10 p-12 rounded-[3rem] text-center sticky top-8'>
+                            <SiWorkplace className='text-orange-500/20 text-6xl mx-auto mb-6' />
+                            <h4 className='text-xs font-black uppercase tracking-widest mb-4'>Interface Locked</h4>
+                            <p className='text-[10px] text-gray-500 leading-relaxed uppercase tracking-widest'>Only validated employers can deploy new job nodes.</p>
                         </div>
                     )}
-                </div>
+                </aside>
             </div>
         </div>
     );
 }
 
-// Simple helper for profile link
 const getProfileLink = (role?: string, type?: string) => {
     if (role === 'admin') return '/admin';
-    if (type === 'employer') return '/employer';
+    if (type === 'employer' || role === 'employer') return '/employer';
     return '/seeker/profile';
 };
 

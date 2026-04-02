@@ -1,18 +1,87 @@
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify, send_from_directory
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import MetaData, func
+from sqlalchemy_serializer import SerializerMixin
+from sqlalchemy.orm import validates
 from flask_migrate import Migrate
 from flask_restful import Api, Resource
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from flask_bcrypt import Bcrypt
 from flask_cors import CORS
-from models import db, User, Job, Application
+from flask_admin import Admin
+from flask_admin.contrib.sqla import ModelView
+from werkzeug.utils import secure_filename
+from datetime import datetime, timedelta
 import os
 
 app = Flask(__name__)
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'dev-secret-key')
+
+# --- 1. CONFIGURATION ---
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-vault-key-32-chars-minimum')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///job_seeker.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.json.compact = False
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=24)
 
+# File Upload Setup
+UPLOAD_FOLDER = 'static/uploads/cvs'
+ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx'}
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# --- 2. MODELS ---
+metadata = MetaData(naming_convention={
+    "ix": "ix_%(column_0_label)s", "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s", "fk": "fk_%(table_name)s_%(column_0_name)s", "pk": "pk_%(table_name)s"
+})
+
+db = SQLAlchemy(metadata=metadata)
+
+class User(db.Model, SerializerMixin):
+    __tablename__ = 'users'
+    serialize_rules = ('-password', '-jobs_posted.employer', '-applications.user')
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String, nullable=False, unique=True)
+    email = db.Column(db.String, unique=True, nullable=False)
+    password = db.Column(db.String, nullable=False)
+    user_type = db.Column(db.String, default='seeker') # 'seeker' or 'employer'
+    user_role = db.Column(db.String, default='user')   # 'user' or 'admin'
+    about = db.Column(db.String)
+    location = db.Column(db.String)
+    profile_picture = db.Column(db.String) 
+    cv_url = db.Column(db.String, nullable=True) 
+    date_created = db.Column(db.DateTime, default=func.now())
+
+    jobs_posted = db.relationship('Job', backref='employer', lazy=True)
+    applications = db.relationship('Application', backref='user', cascade="all, delete-orphan")
+
+class Job(db.Model, SerializerMixin):
+    __tablename__ = 'jobs'
+    serialize_rules = ('-employer.jobs_posted', '-applications.job')
+    id = db.Column(db.Integer, primary_key=True)
+    company = db.Column(db.String, nullable=False)
+    job_title = db.Column(db.String, nullable=False)
+    job_description = db.Column(db.Text, nullable=False)
+    salary = db.Column(db.String)
+    date_created = db.Column(db.DateTime, default=func.now())
+    employer_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    applications = db.relationship('Application', backref='job', cascade="all, delete-orphan")
+
+class Application(db.Model, SerializerMixin):
+    __tablename__ = 'applications'
+    serialize_rules = ('-user.applications', '-job.applications')
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String, default='pending') 
+    employer_message = db.Column(db.Text)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    job_id = db.Column(db.Integer, db.ForeignKey('jobs.id'), nullable=False)
+    application_date = db.Column(db.DateTime, default=func.now())
+    updated_at = db.Column(db.DateTime, onupdate=func.now())
+
+# --- 3. EXTENSIONS ---
 db.init_app(app)
 migrate = Migrate(app, db)
 api = Api(app)
@@ -20,26 +89,26 @@ jwt = JWTManager(app)
 bcrypt = Bcrypt(app)
 CORS(app)
 
-# --- AUTH ---
+# --- 4. ADMIN PANEL ---
+admin_panel = Admin(app, name='Vacancy Portal Admin') 
+admin_panel.add_view(ModelView(User, db.session))
+admin_panel.add_view(ModelView(Job, db.session))
+admin_panel.add_view(ModelView(Application, db.session))
+
+# --- 5. AUTH RESOURCES ---
 class Register(Resource):
     def post(self):
         data = request.get_json()
-        try:
-            hashed = bcrypt.generate_password_hash(data['password']).decode('utf-8')
-            user = User(
-                username=data['username'],
-                email=data['email'],
-                password=hashed,
-                user_type=data.get('user_type', 'seeker'),
-                user_role='user',
-                about=data.get('about'),
-                location=data.get('location')
-            )
-            db.session.add(user)
-            db.session.commit()
-            return {"success": True, "message": "Account created successfully!"}, 201
-        except Exception as e:
-            return {"success": False, "message": "Registration failed.", "error": str(e)}, 422
+        hashed = bcrypt.generate_password_hash(data['password']).decode('utf-8')
+        user = User(
+            username=data['username'], 
+            email=data['email'], 
+            password=hashed, 
+            user_type=data.get('user_type', 'seeker')
+        )
+        db.session.add(user)
+        db.session.commit()
+        return {"success": True, "message": "User registered."}, 201
 
 class Login(Resource):
     def post(self):
@@ -47,196 +116,173 @@ class Login(Resource):
         user = User.query.filter_by(email=data.get('email')).first()
         if user and bcrypt.check_password_hash(user.password, data.get('password')):
             token = create_access_token(identity=str(user.id))
-            return {
-                "success": True,
-                "message": f"Welcome back, {user.username}!",
-                "token": token,
-                "user": user.to_dict()
-            }, 200
-        return {"success": False, "message": "Invalid email or password."}, 401
+            return {"success": True, "token": token, "user": user.to_dict()}, 200
+        return {"success": False, "message": "Invalid credentials."}, 401
 
-# --- USERS ---
-class All_Users(Resource):
-    @jwt_required()
+# --- 6. JOB RESOURCES ---
+class Job_List(Resource):
     def get(self):
-        admin_id = get_jwt_identity()
-        admin = User.query.get(admin_id)
-        if admin.user_role != 'admin':
-            return {"success": False, "message": "Admin access required"}, 403
-        
-        users = [u.to_dict() for u in User.query.all()]
-        return users, 200
+        return [j.to_dict() for j in Job.query.all()], 200
+
+    @jwt_required()
+    def post(self):
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        job = Job(
+            company=data['company'], 
+            job_title=data['job_title'], 
+            job_description=data['job_description'], 
+            salary=data.get('salary'), 
+            employer_id=user_id
+        )
+        db.session.add(job)
+        db.session.commit()
+        return job.to_dict(), 201
+
+class Job_By_Id(Resource):
+    def get(self, id):
+        return Job.query.get_or_404(id).to_dict(), 200
+
+    @jwt_required()
+    def patch(self, id):
+        job = Job.query.get_or_404(id)
+        data = request.get_json()
+        for attr in data:
+            setattr(job, attr, data[attr])
+        db.session.commit()
+        return job.to_dict(), 200
+
+    @jwt_required()
+    def delete(self, id):
+        job = Job.query.get_or_404(id)
+        db.session.delete(job)
+        db.session.commit()
+        return {"message": "Job deleted"}, 204
+
+# --- 7. USER RESOURCES ---
+class User_List(Resource):
+    def get(self):
+        return [u.to_dict() for u in User.query.all()], 200
 
 class User_By_Id(Resource):
     @jwt_required()
     def get(self, id):
-        user = User.query.get_or_404(id)
-        return user.to_dict(), 200
+        return User.query.get_or_404(id).to_dict(), 200
 
     @jwt_required()
     def patch(self, id):
-        current_user_id = get_jwt_identity()
         user = User.query.get_or_404(id)
-        
-        admin = User.query.get(current_user_id)
-        if str(current_user_id) != str(id) and admin.user_role != 'admin':
-            return {"success": False, "message": "Unauthorized"}, 403
-
         data = request.get_json()
+        if 'password' in data:
+            data['password'] = bcrypt.generate_password_hash(data['password']).decode('utf-8')
         for attr in data:
-            if hasattr(user, attr) and attr != 'password':
-                setattr(user, attr, data[attr])
-        
+            setattr(user, attr, data[attr])
         db.session.commit()
-        return {"success": True, "user": user.to_dict()}, 200
+        return user.to_dict(), 200
 
+class UploadCV(Resource):
     @jwt_required()
-    def delete(self, id):
-        current_user_id = get_jwt_identity()
-        admin = User.query.get(current_user_id)
-        
-        if admin.user_role != 'admin':
-            return {"success": False, "message": "Admin privileges required"}, 403
-            
-        user = User.query.get_or_404(id)
-        db.session.delete(user)
-        db.session.commit()
-        return {"success": True, "message": "User deleted successfully"}, 200
+    def post(self, id):
+        if 'cv' not in request.files: return {"message": "No file"}, 400
+        file = request.files['cv']
+        if file and allowed_file(file.filename):
+            filename = secure_filename(f"user_{id}_{file.filename}")
+            path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(path)
+            user = db.session.get(User, id)
+            user.cv_url = path
+            db.session.commit()
+            return {"cv_url": path, "user": user.to_dict()}, 200
+        return {"message": "Invalid file"}, 400
 
-# --- JOBS ---
-class Job_List(Resource):
-    def get(self):
-        jobs = [j.to_dict() for j in Job.query.all()]
-        return jobs, 200
-
-    @jwt_required()
-    def post(self):
-        user_id = get_jwt_identity()
-        user = User.query.get(user_id)
-        if user.user_type != 'employer' and user.user_role != 'admin':
-            return {"success": False, "message": "Only employers can post jobs."}, 403
-        
-        data = request.get_json()
-        # FIXED: Now includes employer_id from JWT
-        job = Job(
-            company=data['company'],
-            job_title=data['job_title'],
-            job_description=data['job_description'],
-            salary=data.get('salary'),
-            employer_id=user.id 
-        )
-        db.session.add(job)
-        db.session.commit()
-        return {"success": True, "job": job.to_dict()}, 201
-
-class Job_By_Id(Resource):
-    @jwt_required()
-    def delete(self, id):
-        user = User.query.get(get_jwt_identity())
-        job = Job.query.get_or_404(id)
-        
-        # Security: Only the owner of the job or an admin can delete it
-        if user.user_role != 'admin' and job.employer_id != user.id:
-            return {"success": False, "message": "Unauthorized."}, 403
-            
-        db.session.delete(job)
-        db.session.commit()
-        return {"success": True, "message": "Job deleted."}, 200
-
-# --- APPLICATIONS ---
+# --- 8. APPLICATION RESOURCES (ENHANCED MESSAGING) ---
 class Apply(Resource):
     @jwt_required()
-    def post(self):
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        
-        existing = Application.query.filter_by(user_id=user_id, job_id=data['job_id']).first()
-        if existing:
-            return {"success": False, "message": "Already applied."}, 400
-
-        new_app = Application(user_id=user_id, job_id=data['job_id'])
-        db.session.add(new_app)
-        db.session.commit()
-        return {"success": True, "application": new_app.to_dict()}, 201
-
-    @jwt_required()
     def get(self):
-        user = User.query.get(get_jwt_identity())
-        if user.user_type == 'employer' or user.user_role == 'admin':
-            apps = Application.query.all()
+        user_id = get_jwt_identity()
+        user = db.session.get(User, user_id)
+        
+        if user.user_type.lower() == 'employer':
+            job_ids = [job.id for job in user.jobs_posted]
+            apps = Application.query.filter(Application.job_id.in_(job_ids)).all()
         else:
-            apps = Application.query.filter_by(user_id=user.id).all()
+            apps = Application.query.filter_by(user_id=user_id).all()
+            
         return [a.to_dict() for a in apps], 200
 
-# NEW: Specific endpoint for the Employer Talent Pipeline
-class EmployerApplications(Resource):
     @jwt_required()
-    def get(self):
+    def post(self):
         user_id = get_jwt_identity()
-        user = User.query.get(user_id)
-
-        if user.user_type != 'employer' and user.user_role != 'admin':
-            return {"success": False, "message": "Unauthorized access"}, 403
-
-        # Join Jobs and Applications to find applicants for THIS employer's jobs
-        if user.user_role == 'admin':
-            apps = Application.query.all()
-        else:
-            apps = Application.query.join(Job).filter(Job.employer_id == user.id).all()
-
-        results = []
-        for app in apps:
-            results.append({
-                "id": app.id,
-                "job_title": app.job.job_title,
-                "seeker_name": app.user.username,
-                "seeker_email": app.user.email,
-                "seeker_about": app.user.about,
-                "status": app.status,
-                "applied_at": app.application_date.isoformat()
-            })
+        user = db.session.get(User, user_id)
         
-        return results, 200
+        if 'cv' in request.files:
+            file = request.files['cv']
+            filename = secure_filename(f"user_{user_id}_{file.filename}")
+            path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(path)
+            user.cv_url = path
+            job_id = request.form.get('job_id')
+        else:
+            job_id = request.get_json().get('job_id')
+        
+        # New automated application message
+        apply_msg = "Thank you for applying! Our team will review your application and get back to you soon."
+        
+        new_app = Application(
+            user_id=user_id, 
+            job_id=job_id, 
+            employer_message=apply_msg,
+            status='pending'
+        )
+        db.session.add(new_app)
+        db.session.commit()
+        return {"success": True, "user": user.to_dict()}, 201
 
 class Application_By_Id(Resource):
     @jwt_required()
     def patch(self, id):
-        user = User.query.get(get_jwt_identity())
-        app_record = Application.query.get_or_404(id)
-
-        # Security: Only the employer who owns the job can change the status
-        if user.user_role != 'admin' and app_record.job.employer_id != user.id:
-             return {"success": False, "message": "Permission denied."}, 403
-        
+        app_rec = Application.query.get_or_404(id)
         data = request.get_json()
-        if 'status' in data:
-            app_record.status = data['status']
-            db.session.commit()
-            return {"success": True, "message": f"Status updated to {data['status']}"}, 200
-        return {"success": False, "message": "No status provided."}, 400
+        
+        new_status = data.get('status', app_rec.status).lower()
+        
+        # Automated Employer Logic
+        if new_status == 'accepted':
+            default_msg = "Congratulations! Your profile has been shortlisted. Our team will contact you for an interview shortly."
+        elif new_status == 'rejected':
+            default_msg = "Thank you for applying. We have reviewed your application and unfortunately, you don't meet our current standards. We wish you the best in your search."
+        else:
+            default_msg = app_rec.employer_message
+
+        app_rec.status = new_status
+        # Use provided message from frontend if it exists, otherwise use our automated default
+        app_rec.employer_message = data.get('message', default_msg)
+        
+        db.session.commit()
+        return app_rec.to_dict(), 200
 
     @jwt_required()
     def delete(self, id):
-        user_id = get_jwt_identity()
-        app_record = Application.query.get_or_404(id)
-        
-        if str(app_record.user_id) != str(user_id) and User.query.get(user_id).user_role != 'admin':
-            return {"success": False, "message": "Unauthorized withdrawal."}, 403
-            
-        db.session.delete(app_record)
+        app_rec = Application.query.get_or_404(id)
+        db.session.delete(app_rec)
         db.session.commit()
-        return {"success": True, "message": "Application removed."}, 200
+        return {"message": "Application removed"}, 204
 
-# --- ROUTES ---
+# --- 9. STATIC FILE SERVING ---
+@app.route('/static/uploads/cvs/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# --- 10. ROUTE BINDING ---
 api.add_resource(Register, '/register')
 api.add_resource(Login, '/login')
-api.add_resource(All_Users, '/users')
+api.add_resource(User_List, '/users')
 api.add_resource(User_By_Id, '/users/<int:id>')
+api.add_resource(UploadCV, '/users/<int:id>/cv')
 api.add_resource(Job_List, '/jobs')
 api.add_resource(Job_By_Id, '/jobs/<int:id>')
 api.add_resource(Apply, '/applications')
 api.add_resource(Application_By_Id, '/applications/<int:id>')
-api.add_resource(EmployerApplications, '/employer/applications') # NEW ROUTE
 
 if __name__ == "__main__":
-    app.run(port=5555, debug=True)
+    app.run(port=5000, debug=True)

@@ -1,10 +1,13 @@
 // --- ENUMS & LITERALS ---
-export type UserRole = 'admin' | 'user' | 'employer' | 'seeker';
-export type UserType = 'seeker' | 'employer' | 'admin';
+/**
+ * user_role: 'admin' (can delete everything) or 'user' (standard)
+ * user_type: 'seeker' (applies) or 'employer' (posts)
+ */
+export type UserRole = 'admin' | 'user';
+export type UserType = 'seeker' | 'employer';
 
-export type ApplicationStatus = 
-  | 'Pending' | 'Accepted' | 'Rejected' 
-  | 'pending' | 'accepted' | 'rejected';
+/** Consistent with backend Application.status defaults */
+export type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | string;
 
 // --- INTERFACES ---
 
@@ -16,34 +19,41 @@ export interface User {
   user_type: UserType;
   about?: string;
   location?: string;
+  profile_picture?: string;
+  /** NEW: Linked to the cv_url column in the backend User model */
+  cv_url?: string | null; 
   date_created: string; 
-  last_active: string;  
+  last_active?: string;  
   applications?: Application[]; 
-  profile_picture?: string; 
+  jobs_posted?: Job[];
 }
 
 export interface Job {
   id: number;
-  /** The FK to the User who created the job (consistent with backend) */
+  /** Matches the ForeignKey 'employer_id' in the backend Job model */
   employer_id: number; 
-  /** Optional backup for older records or specific joins */
-  user_id?: number; 
   company: string;
   job_title: string;
   job_description: string;
   salary: string;
   date_created: string;
-  /** Included to support the "Applicant Count" logic */
+  /** Used for 'stats' views or admin counters */
   applications?: Application[];
 }
 
 export interface Application {
   id: number;
   status: ApplicationStatus;
+  /** NEW: Captured from the updated Flask model for employer feedback */
+  employer_message?: string | null;
+  
   user_id: number;
   job_id: number;
   application_date: string;
-  /** Nested data enabled by your serialize_rules in Flask */
+  /** Updated automatically via SQL Alchemy's onupdate=func.now() */
+  updated_at?: string | null;
+
+  /** Nested data enabled by SerializerMixin serialize_rules */
   job?: Job;  
   user?: User; 
 }

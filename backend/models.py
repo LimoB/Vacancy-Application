@@ -15,7 +15,6 @@ db = SQLAlchemy(metadata=metadata)
 
 class User(db.Model, SerializerMixin):
     __tablename__ = 'users'
-    # Serialize rules to prevent infinite recursion and hide passwords
     serialize_rules = ('-applications.user', '-password', '-jobs_posted.employer')
 
     id = db.Column(db.Integer, primary_key=True)
@@ -29,13 +28,16 @@ class User(db.Model, SerializerMixin):
     
     about = db.Column(db.String)
     location = db.Column(db.String)
-    profile_picture = db.Column(db.String) # Added to match your frontend Image tags
+    profile_picture = db.Column(db.String) 
+    
+    # NEW: Store the path/URL to the seeker's CV
+    cv_url = db.Column(db.String, nullable=True) 
+    
     date_created = db.Column(db.DateTime, default=func.now())
     last_active = db.Column(db.DateTime, default=func.now(), onupdate=func.now())
 
     # Relationships
     applications = db.relationship('Application', backref='user', cascade="all, delete-orphan")
-    # Link to jobs they created (if they are an employer)
     jobs_posted = db.relationship('Job', backref='employer', lazy=True)
 
     @validates('email')
@@ -55,22 +57,24 @@ class Job(db.Model, SerializerMixin):
     salary = db.Column(db.String)
     date_created = db.Column(db.DateTime, default=func.now())
 
-    # THE FIX: Link the job to the User (Employer) who created it
     employer_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-
-    # Relationships
     applications = db.relationship('Application', backref='job', cascade="all, delete-orphan")
 
 class Application(db.Model, SerializerMixin):
     __tablename__ = 'applications'
-    # Keep job and user info for the Talent Pipeline view
     serialize_rules = ('-user.applications', '-job.applications')
 
     id = db.Column(db.Integer, primary_key=True)
     
-    # ATS logic: 'pending', 'accepted', 'rejected'
+    # Status: 'pending', 'accepted', 'rejected'
     status = db.Column(db.String, default='pending')
+    
+    # NEW: Store the employer's response/feedback message
+    employer_message = db.Column(db.String, nullable=True)
     
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     job_id = db.Column(db.Integer, db.ForeignKey('jobs.id'), nullable=False)
+    
     application_date = db.Column(db.DateTime, default=func.now())
+    # Tracking when the status was last updated
+    updated_at = db.Column(db.DateTime, onupdate=func.now())
