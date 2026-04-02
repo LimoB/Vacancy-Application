@@ -239,7 +239,7 @@ const UserProfile = () => {
 
             {errorMsg && (
                 <div className='mb-8 p-5 bg-red-500/10 border border-red-500/20 text-red-400 text-[9px] font-black uppercase tracking-widest rounded-2xl'>
-                    ⚠️ Protocol Error: {errorMsg}
+                    Protocol Error: {errorMsg}
                 </div>
             )}
 

@@ -1,12 +1,6 @@
 // --- ENUMS & LITERALS ---
-/**
- * user_role: 'admin' (can delete everything) or 'user' (standard)
- * user_type: 'seeker' (applies) or 'employer' (posts)
- */
 export type UserRole = 'admin' | 'user';
 export type UserType = 'seeker' | 'employer';
-
-/** Consistent with backend Application.status defaults */
 export type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | string;
 
 // --- INTERFACES ---
@@ -20,40 +14,42 @@ export interface User {
   about?: string;
   location?: string;
   profile_picture?: string;
-  /** NEW: Linked to the cv_url column in the backend User model */
   cv_url?: string | null; 
   date_created: string; 
   last_active?: string;  
-  applications?: Application[]; 
-  jobs_posted?: Job[];
 }
 
 export interface Job {
+  user_id: number;
   id: number;
-  /** Matches the ForeignKey 'employer_id' in the backend Job model */
-  employer_id: number; 
+  employer_id: number; // Matches the ForeignKey
   company: string;
   job_title: string;
   job_description: string;
   salary: string;
   date_created: string;
-  /** Used for 'stats' views or admin counters */
+  
+  /** * CRITICAL: Because of your Flask backref='employer', 
+   * the nested user data will likely come back under the key 'employer'
+   */
+  employer?: User; 
+  
+  /** Optional fallback if you use different serialization rules elsewhere */
+  user?: User;
   applications?: Application[];
 }
 
 export interface Application {
   id: number;
   status: ApplicationStatus;
-  /** NEW: Captured from the updated Flask model for employer feedback */
   employer_message?: string | null;
   
   user_id: number;
   job_id: number;
   application_date: string;
-  /** Updated automatically via SQL Alchemy's onupdate=func.now() */
   updated_at?: string | null;
 
-  /** Nested data enabled by SerializerMixin serialize_rules */
+  /** Nested data from SerializerMixin */
   job?: Job;  
-  user?: User; 
+  user?: User; // The Seeker who applied
 }

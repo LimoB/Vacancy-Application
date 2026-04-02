@@ -195,6 +195,9 @@ class UploadCV(Resource):
             return {"cv_url": path, "user": user.to_dict()}, 200
         return {"message": "Invalid file"}, 400
 
+
+
+
 # --- 8. APPLICATION RESOURCES (ENHANCED MESSAGING) ---
 class Apply(Resource):
     @jwt_required()
@@ -202,41 +205,51 @@ class Apply(Resource):
         user_id = get_jwt_identity()
         user = db.session.get(User, user_id)
         
+        if not user:
+            return {"message": "User not found"}, 404
+
+        # --- 1. ADMIN OVERRIDE ---
+        # If the user is an admin, they bypass all filters and get EVERYTHING
+        if user.user_role.lower() == 'admin':
+            print(f"⚡ Admin {user.username} is fetching all applications.")
+            apps = Application.query.all()
+            return [a.to_dict() for a in apps], 200
+
+        # --- 2. EMPLOYER LOGIC ---
         if user.user_type.lower() == 'employer':
+            # Get IDs of all jobs posted by this employer
             job_ids = [job.id for job in user.jobs_posted]
+            # Filter applications that belong to those jobs
             apps = Application.query.filter(Application.job_id.in_(job_ids)).all()
+            print(f"💼 Employer {user.username} fetching {len(apps)} apps for their jobs.")
+        
+        # --- 3. SEEKER LOGIC ---
         else:
+            # Seekers only see their own applications
             apps = Application.query.filter_by(user_id=user_id).all()
+            print(f"🔍 Seeker {user.username} fetching their own {len(apps)} apps.")
             
         return [a.to_dict() for a in apps], 200
 
     @jwt_required()
     def post(self):
+        # ... (Keep your existing POST logic for applying)
         user_id = get_jwt_identity()
-        user = db.session.get(User, user_id)
+        data = request.get_json() if not request.files else request.form
         
-        if 'cv' in request.files:
-            file = request.files['cv']
-            filename = secure_filename(f"user_{user_id}_{file.filename}")
-            path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(path)
-            user.cv_url = path
-            job_id = request.form.get('job_id')
-        else:
-            job_id = request.get_json().get('job_id')
-        
-        # New automated application message
-        apply_msg = "Thank you for applying! Our team will review your application and get back to you soon."
-        
+        job_id = data.get('job_id')
+        if not job_id:
+            return {"message": "Job ID is required"}, 400
+
         new_app = Application(
             user_id=user_id, 
             job_id=job_id, 
-            employer_message=apply_msg,
-            status='pending'
+            status='pending',
+            employer_message="Thank you for your application. We have received your submission and our team is currently reviewing it. We will get back to you shortly."
         )
         db.session.add(new_app)
         db.session.commit()
-        return {"success": True, "user": user.to_dict()}, 201
+        return new_app.to_dict(), 201
 
 class Application_By_Id(Resource):
     @jwt_required()
@@ -248,9 +261,9 @@ class Application_By_Id(Resource):
         
         # Automated Employer Logic
         if new_status == 'accepted':
-            default_msg = "Congratulations! Your profile has been shortlisted. Our team will contact you for an interview shortly."
+            default_msg = "Congratulations! Your application has been shortlisted. Our team will contact you soon with the next steps, including interview details. We look forward to potentially welcoming you to our team!"
         elif new_status == 'rejected':
-            default_msg = "Thank you for applying. We have reviewed your application and unfortunately, you don't meet our current standards. We wish you the best in your search."
+            default_msg = "Thank you for your application. After careful consideration, we regret to inform you that we will not be proceeding with your application at this time. We appreciate your interest and wish you success in your job search."
         else:
             default_msg = app_rec.employer_message
 
